@@ -21,6 +21,7 @@ It is designed to be run as a Docker container, typically orchestrated with `doc
 3.  **Environment Variables**:
     *   `VERTEXAI_PROJECT`: Your Google Cloud Project ID.
     *   `VERTEXAI_LOCATION`: The Google Cloud region for Vertex AI (e.g., `us-central1`).
+    *   `VERTEXAI_PROXY_API_KEY`: A required long, random secret used to authenticate requests to the proxy.
 4.  **Docker and Docker Compose**: Required to build and run the service.
 
 ## How to Run
@@ -28,11 +29,12 @@ It is designed to be run as a Docker container, typically orchestrated with `doc
 The project includes a `docker-compose.yml` file for easy setup with Open WebUI.
 
 1.  **Configure Environment Variables**:
-    Ensure `VERTEXAI_PROJECT` and `VERTEXAI_LOCATION` are set in your environment or in a `.env` file in the project root. `docker-compose` will automatically pick them up.
+    Ensure `VERTEXAI_PROJECT`, `VERTEXAI_LOCATION`, and `VERTEXAI_PROXY_API_KEY` are set in your environment or in a `.env` file in the project root. `VERTEXAI_PROXY_API_KEY` is required and must be a long, random secret. `docker-compose` will automatically pick them up.
     Example `.env` file:
     ```
     VERTEXAI_PROJECT=your-gcp-project-id
     VERTEXAI_LOCATION=us-central1
+    VERTEXAI_PROXY_API_KEY=replace-with-a-long-random-secret
     ```
 
 2.  **Verify ADC Path (if necessary)**:
@@ -76,6 +78,7 @@ The proxy service is configured via environment variables:
 
 *   `VERTEXAI_PROJECT`: (Required) Your Google Cloud Project ID.
 *   `VERTEXAI_LOCATION`: (Required) The Google Cloud region for Vertex AI (e.g., `us-central1`) or `global` for the global endpoint.
+*   `VERTEXAI_PROXY_API_KEY`: (Required) A long, random secret that clients must send as a Bearer credential to authenticate with the proxy.
 *   `GOOGLE_APPLICATION_CREDENTIALS`: (Set within `docker-compose.yml`) Points to the path of the mounted ADC JSON file inside the container (e.g., `/app/gcp_adc.json`).
 *   `VERTEXAI_AVAILABLE_MODELS`: (Optional) A comma-separated list of model IDs to serve via the `/v1/models` endpoint.
     *   Example: `VERTEXAI_AVAILABLE_MODELS="google/gemini-1.0-pro,google/gemini-1.5-flash-preview-0514"`
@@ -95,10 +98,10 @@ The proxy service is configured via environment variables:
 
 ### Open WebUI Service (`docker-compose.yml`)
 
-The `webui` service in `docker-compose.yml` is pre-configured to use the proxy:
+The `webui` service in `docker-compose.yml` is pre-configured to use the proxy and receives `VERTEXAI_PROXY_API_KEY` unchanged as its API key:
 
 *   `OPENAI_API_BASE_URL: http://proxy:8080/v1`
-*   `OPENAI_API_KEY: dummy_key_for_vertex_proxy` (The key can be any non-empty string as the proxy handles authentication via ADC).
+*   `OPENAI_API_KEY: ${VERTEXAI_PROXY_API_KEY:?Set VERTEXAI_PROXY_API_KEY in .env}`
 
 ### Available Models
 
@@ -176,5 +179,5 @@ LOG_FORMAT=json
     *   Ensure your ADC file is correctly mounted and `GOOGLE_APPLICATION_CREDENTIALS` inside the container points to it.
     *   Verify the Vertex AI API is enabled in your GCP project.
     *   Check that the service account associated with your ADC (or your user credentials) has the "Vertex AI User" role or equivalent permissions.
-*   **"dummy_key_for_vertex_proxy"**: This key is used by Open WebUI to satisfy its requirement for an API key. The actual authentication to Vertex AI is handled by the proxy using Google Cloud ADC.
+*   **`VERTEXAI_PROXY_API_KEY`**: Open WebUI sends this required shared secret unchanged as its API key; the proxy verifies it as the Bearer credential.
 *   **Model Not Found**: Ensure the model name used in your client application (e.g., Open WebUI) matches one of the models supported by the proxy (e.g., `google/gemini-2.5-pro-preview-03-25`). The client must send the model name with the `google/` prefix if required by the Vertex AI backend, as the proxy no longer automatically prepends it.

@@ -16,6 +16,7 @@ func TestAPIKeyAuth(t *testing.T) {
 		{name: "non-Bearer scheme", authorization: "Basic secret", wantStatus: http.StatusUnauthorized},
 		{name: "incorrect key", authorization: "Bearer incorrect", wantStatus: http.StatusUnauthorized},
 		{name: "exact Bearer key", authorization: "Bearer secret", wantStatus: http.StatusNoContent},
+		{name: "lowercase bearer key", authorization: "bearer secret", wantStatus: http.StatusNoContent},
 	}
 
 	for _, tt := range tests {
