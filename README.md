@@ -55,7 +55,7 @@ The project includes a `docker-compose.yml` file for easy setup with Open WebUI.
     This will build the proxy image (if not already built) and start both the `proxy` and `webui` services.
 
 4.  **Access Open WebUI**:
-    Open your browser and navigate to `http://localhost:8080`. Open WebUI should be configured to use the proxy.
+    On the host, open `http://localhost:8080`. From a device on the home network, open `http://<host-LAN-IP>:8080`, replacing `<host-LAN-IP>` with the host's private IPv4 address (for example, `192.168.1.10`). The service listens on all IPv4 interfaces, including VPN interfaces; restrict TCP/8080 to trusted networks with the host firewall when one is enabled.
 
 ## How to Test
 
