@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -145,6 +146,7 @@ func TestMakeProxy(t *testing.T) {
 	proxy := makeProxy(targetURL)
 
 	req := httptest.NewRequest("GET", "http://localhost/v1/testpath", nil)
+	req.Header.Set("Authorization", "Bearer proxy-secret")
 	rr := httptest.NewRecorder()
 
 	proxy.ServeHTTP(rr, req)
@@ -158,6 +160,52 @@ func TestMakeProxy(t *testing.T) {
 	if rr.Body.String() != expectedBody {
 		t.Errorf("handler returned unexpected body: got %v want %v",
 			rr.Body.String(), expectedBody)
+	}
+}
+
+func TestMakeProxy_DoesNotForwardClientAuthorizationWhenADCFails(t *testing.T) {
+	tokenMutex.Lock()
+	originalToken, originalExpiry := token, expiry
+	token, expiry = "", time.Time{}
+	tokenMutex.Unlock()
+	t.Cleanup(func() {
+		tokenMutex.Lock()
+		token, expiry = originalToken, originalExpiry
+		tokenMutex.Unlock()
+	})
+
+	originalFindDefaultCredentials := googleFindDefaultCredentials
+	googleFindDefaultCredentials = func(context.Context, ...string) (*google.Credentials, error) {
+		return nil, errors.New("ADC unavailable")
+	}
+	t.Cleanup(func() {
+		googleFindDefaultCredentials = originalFindDefaultCredentials
+	})
+
+	upstreamRequests := 0
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(targetServer.Close)
+
+	targetURL, err := url.Parse(targetServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := makeProxy(targetURL)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/testpath", nil)
+	req.Header.Set("Authorization", "Bearer proxy-secret")
+	rr := httptest.NewRecorder()
+
+	proxy.ServeHTTP(rr, req)
+
+	if rr.Code >= http.StatusOK && rr.Code < http.StatusMultipleChoices {
+		t.Errorf("proxy returned success status %d after ADC failure", rr.Code)
+	}
+	if upstreamRequests != 0 {
+		t.Errorf("upstream received %d requests after ADC failure, want 0", upstreamRequests)
 	}
 }
 

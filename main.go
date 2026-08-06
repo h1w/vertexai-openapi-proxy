@@ -145,8 +145,8 @@ func getToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-func makeProxy(target *url.URL) *httputil.ReverseProxy {
-	return &httputil.ReverseProxy{
+func makeProxy(target *url.URL) http.Handler {
+	reverseProxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			// Log basic request info. Avoid logging full headers here to prevent excessive log volume.
 			// Specific headers like Authorization are logged when set.
@@ -206,12 +206,6 @@ func makeProxy(target *url.URL) *httputil.ReverseProxy {
 
 			logger.Debug("makeProxy Director: Final target URL for upstream", "url", req.URL.String())
 
-			if tok, err := getToken(req.Context()); err == nil {
-				req.Header.Set("Authorization", "Bearer "+tok)
-				logger.Debug("makeProxy Director: Authorization header set", "path", req.URL.Path)
-			} else {
-				logger.Error("Error getting token for request", "path", originalPath, "error", err)
-			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			logger.Debug("makeProxy ModifyResponse: Received response from upstream", "host", resp.Request.URL.Host, "method", resp.Request.Method, "path", resp.Request.URL.Path, "status", resp.Status)
@@ -264,6 +258,19 @@ func makeProxy(target *url.URL) *httputil.ReverseProxy {
 			io.WriteString(w, fmt.Sprintf("Proxy error connecting to upstream service: %v", err))
 		},
 	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok, err := getToken(r.Context())
+		if err != nil {
+			logger.Error("Error getting token for request", "path", r.URL.Path, "error", err)
+			http.Error(w, "Proxy authentication failed", http.StatusBadGateway)
+			return
+		}
+
+		r.Header.Del("Authorization")
+		r.Header.Set("Authorization", "Bearer "+tok)
+		reverseProxy.ServeHTTP(w, r)
+	})
 }
 
 func handleModels(w http.ResponseWriter, r *http.Request) {
