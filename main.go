@@ -317,6 +317,7 @@ func main() {
 	auth := newAPIKeyAuth(apiKey)
 	http.Handle("/v1/models", auth(newOpenAIModelsHandler(catalog)))
 	http.Handle("/vertex/v1/models", auth(newNativeModelsHandler(catalog)))
+	http.Handle("/vertex/v1/models/", auth(newNativeModelProxy(target.Scheme+"://"+target.Host, projectID, location, getToken, http.DefaultClient)))
 	http.Handle("/v1/", auth(makeProxy(target)))
 
 	// Get port from environment variable, default to 8080
@@ -327,7 +328,7 @@ func main() {
 	addr := ":" + port
 
 	logger.Info("proxy listening", "address", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, newNativeModelDispatcher(http.DefaultServeMux)); err != nil {
 		log.Fatalf("main: ListenAndServe failed: %v", err)
 	}
 }
