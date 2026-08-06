@@ -5,7 +5,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY *.go ./
+COPY auth.go catalog.go main.go native_proxy.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/proxy
 
