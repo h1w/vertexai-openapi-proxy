@@ -333,6 +333,11 @@ func main() {
 	if location == "" || projectID == "" {
 		log.Fatal("VERTEXAI_LOCATION and VERTEXAI_PROJECT env vars must be set")
 	}
+	apiKey := os.Getenv("VERTEXAI_PROXY_API_KEY")
+	if apiKey == "" {
+		log.Fatal("VERTEXAI_PROXY_API_KEY env var must be set")
+	}
+
 
 	var baseURL string
 	if location == "global" {
@@ -356,8 +361,9 @@ func main() {
 	}
 	logger.Info("main: Proxy target URL configured", "url", target.String())
 
-	http.HandleFunc("/v1/models", handleModels)
-	http.Handle("/v1/", makeProxy(target))
+	auth := newAPIKeyAuth(apiKey)
+	http.Handle("/v1/models", auth(http.HandlerFunc(handleModels)))
+	http.Handle("/v1/", auth(makeProxy(target)))
 
 	// Get port from environment variable, default to 8080
 	port := os.Getenv("PORT")
