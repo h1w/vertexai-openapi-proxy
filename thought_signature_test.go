@@ -93,3 +93,37 @@ func TestRestoreThoughtSignaturesLeavesExistingAndUnknownSignaturesUntouched(t *
 		})
 	}
 }
+
+func TestRestoreThoughtSignaturesRecoversNullExtraContent(t *testing.T) {
+	store := newThoughtSignatureStore(time.Hour, time.Now)
+	store.put("call-1", "vertex-signature")
+
+	body, changed := restoreThoughtSignatures([]byte(`{"messages":[{"role":"assistant","tool_calls":[{"id":"call-1","extra_content":{"google":null}}]}]}`), store)
+	if !changed {
+		t.Fatal("restoreThoughtSignatures() did not recover a null Google extension")
+	}
+	if !strings.Contains(string(body), `"thought_signature":"vertex-signature"`) {
+		t.Fatalf("recovered request omitted signature: %s", body)
+	}
+}
+
+func TestCaptureThoughtSignaturesFromJSONResponseClosesUpstreamBody(t *testing.T) {
+	upstream := &closeTrackingReadCloser{Reader: strings.NewReader(strings.Repeat("x", maxThoughtSignatureJSONResponseBytes+1))}
+	captured := captureThoughtSignaturesFromJSONResponse(upstream, newThoughtSignatureStore(time.Hour, time.Now))
+	if err := captured.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !upstream.closed {
+		t.Fatal("closing captured body did not close the upstream body")
+	}
+}
+
+type closeTrackingReadCloser struct {
+	*strings.Reader
+	closed bool
+}
+
+func (body *closeTrackingReadCloser) Close() error {
+	body.closed = true
+	return nil
+}

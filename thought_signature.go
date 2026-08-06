@@ -174,13 +174,13 @@ func hasThoughtSignature(extraContentBody json.RawMessage) bool {
 
 func withThoughtSignature(extraContentBody json.RawMessage, signature string) (json.RawMessage, error) {
 	extraContent := make(map[string]json.RawMessage)
-	if len(extraContentBody) > 0 {
+	if len(extraContentBody) > 0 && !isJSONNull(extraContentBody) {
 		if err := json.Unmarshal(extraContentBody, &extraContent); err != nil {
 			return nil, err
 		}
 	}
 	google := make(map[string]json.RawMessage)
-	if googleBody := extraContent["google"]; len(googleBody) > 0 {
+	if googleBody := extraContent["google"]; len(googleBody) > 0 && !isJSONNull(googleBody) {
 		if err := json.Unmarshal(googleBody, &google); err != nil {
 			return nil, err
 		}
@@ -196,6 +196,10 @@ func withThoughtSignature(extraContentBody json.RawMessage, signature string) (j
 	}
 	extraContent["google"] = encodedGoogle
 	return json.Marshal(extraContent)
+}
+
+func isJSONNull(body json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(body), []byte("null"))
 }
 
 func captureThoughtSignatures(body []byte, store *thoughtSignatureStore) {
@@ -302,10 +306,19 @@ const maxThoughtSignatureJSONResponseBytes = 1 << 20
 func captureThoughtSignaturesFromJSONResponse(body io.ReadCloser, store *thoughtSignatureStore) io.ReadCloser {
 	prefix, err := io.ReadAll(io.LimitReader(body, maxThoughtSignatureJSONResponseBytes+1))
 	if err != nil || len(prefix) > maxThoughtSignatureJSONResponseBytes {
-		return io.NopCloser(io.MultiReader(bytes.NewReader(prefix), body))
+		return &preservingReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), body), closer: body}
 	}
 	captureThoughtSignatures(prefix, store)
-	return io.NopCloser(bytes.NewReader(prefix))
+	return &preservingReadCloser{Reader: bytes.NewReader(prefix), closer: body}
+}
+
+type preservingReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (body *preservingReadCloser) Close() error {
+	return body.closer.Close()
 }
 
 func (store *thoughtSignatureStore) removeExpired(now time.Time) {
