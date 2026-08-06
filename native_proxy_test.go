@@ -22,8 +22,11 @@ func TestNativeModelProxy(t *testing.T) {
 		if got, want := r.Method, http.MethodPost; got != want {
 			t.Errorf("upstream method = %q, want %q", got, want)
 		}
-		if got, want := r.URL.Path, "/v1/projects/project/locations/europe-central2/publishers/google/models/gemini-test:generateContent"; got != want {
-			t.Errorf("upstream path = %q, want %q", got, want)
+		switch r.URL.Path {
+		case "/v1/projects/project/locations/europe-central2/publishers/google/models/gemini-test:generateContent",
+			"/v1/projects/project/locations/europe-central2/publishers/google/models/textembedding-gecko@001:predict":
+		default:
+			t.Errorf("upstream path = %q", r.URL.Path)
 		}
 		if got, want := r.Header.Get("Content-Type"), "application/json"; got != want {
 			t.Errorf("upstream content type = %q, want %q", got, want)
@@ -69,6 +72,17 @@ func TestNativeModelProxy(t *testing.T) {
 		}
 		if got, want := recorder.Body.String(), `{"candidates":[]}`; got != want {
 			t.Errorf("body = %q, want %q", got, want)
+		}
+	})
+	t.Run("forwards versioned Google model", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/vertex/v1/models/google/textembedding-gecko@001:predict", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+
+		handler.ServeHTTP(recorder, req)
+
+		if got, want := recorder.Code, http.StatusCreated; got != want {
+			t.Fatalf("status = %d, want %d: %s", got, want, recorder.Body.String())
 		}
 	})
 

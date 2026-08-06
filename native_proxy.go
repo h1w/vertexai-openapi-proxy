@@ -11,7 +11,7 @@ import (
 
 const nativeModelsPrefix = "/vertex/v1/models/"
 
-var nativeModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var nativeModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]*$`)
 
 func newNativeModelDispatcher(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
