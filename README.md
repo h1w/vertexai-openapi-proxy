@@ -7,8 +7,8 @@ This project provides a proxy server that translates OpenAI API requests to Goog
 The proxy handles:
 - Authentication with Google Cloud using Application Default Credentials (ADC).
 - Caching of authentication tokens.
-- Serving a static list of available Vertex AI models under the `/v1/models` endpoint.
-- Proxying chat completion requests to the appropriate Vertex AI endpoint.
+- Discovering the live Google publisher catalog through `/v1/models`.
+- Proxying supported OpenAI chat completion and native Vertex AI inference requests.
 
 It is designed to be run as a Docker container, typically orchestrated with `docker-compose` alongside an application like Open WebUI.
 
@@ -80,10 +80,6 @@ The proxy service is configured via environment variables:
 *   `VERTEXAI_LOCATION`: (Required) The Google Cloud region for Vertex AI (e.g., `us-central1`) or `global` for the global endpoint.
 *   `VERTEXAI_PROXY_API_KEY`: (Required) A long, random secret that clients must send as a Bearer credential to authenticate with the proxy.
 *   `GOOGLE_APPLICATION_CREDENTIALS`: (Set within `docker-compose.yml`) Points to the path of the mounted ADC JSON file inside the container (e.g., `/app/gcp_adc.json`).
-*   `VERTEXAI_AVAILABLE_MODELS`: (Optional) A comma-separated list of model IDs to serve via the `/v1/models` endpoint.
-    *   Example: `VERTEXAI_AVAILABLE_MODELS="google/gemini-1.0-pro,google/gemini-1.5-flash-preview-0514"`
-    *   If not set or empty, defaults to: `"google/gemini-2.5-pro-preview-03-25,google/gemini-2.5-flash-preview-04-17"`.
-    *   Spaces around model IDs and commas are trimmed. Empty entries resulting from multiple commas (e.g. `model1,,model2`) are ignored.
 
 *   `LOG_LEVEL`: (Optional) Sets the logging level.
     *   Supported values: `debug`, `info`, `warn`, `error`.
@@ -103,15 +99,38 @@ The `webui` service in `docker-compose.yml` is pre-configured to use the proxy a
 *   `OPENAI_API_BASE_URL: http://proxy:8080/v1`
 *   `OPENAI_API_KEY: ${VERTEXAI_PROXY_API_KEY:?Set VERTEXAI_PROXY_API_KEY in .env}`
 
-### Available Models
+## Model discovery and API surfaces
 
-The list of models served by the `/v1/models` endpoint can be configured using the `VERTEXAI_AVAILABLE_MODELS` environment variable (see "Proxy Service" configuration above).
+Both API surfaces require `Authorization: Bearer $VERTEXAI_PROXY_API_KEY`. Docker Compose requires this one secret and passes it to the proxy as `VERTEXAI_PROXY_API_KEY` and to Open WebUI as `OPENAI_API_KEY`.
 
-If `VERTEXAI_AVAILABLE_MODELS` is not set or is empty, the proxy defaults to serving the following models:
-*   `google/gemini-2.5-pro-preview-03-25`
-*   `google/gemini-2.5-flash-preview-04-17`
+### OpenAI-compatible surface
 
-All models, whether default or custom, are presented with `object: "model"` and `owned_by: "google"`.
+* `GET /v1/models` returns the live Google publisher catalog as an OpenAI `ModelList`; there is no static model allowlist.
+* `POST /v1/chat/completions` remains OpenAI-compatible for models that support Vertex Chat Completions. Open WebUI can display other catalog models, but it cannot call non-chat capabilities through this endpoint.
+
+### Native Vertex AI surface
+
+* `GET /vertex/v1/models` returns the catalog.
+* Send native inference requests to `/vertex/v1/models/{publisher}/{model}:{action}`. For example:
+
+  ```bash
+  curl --request POST \
+    --url http://localhost:8080/vertex/v1/models/google/gemini-2.5-flash:generateContent \
+    --header "Authorization: Bearer $VERTEXAI_PROXY_API_KEY" \
+    --header "Content-Type: application/json" \
+    --data '{
+      "contents": [
+        {
+          "role": "user",
+          "parts": [{"text": "Hello"}]
+        }
+      ]
+    }'
+  ```
+
+* The native route supports only these inference actions: `generateContent`, `streamGenerateContent`, `embedContent`, `predict`, `rawPredict`, `streamRawPredict`, `serverStreamingPredict`, `predictLongRunning`, and `fetchPredictOperation`. Other Vertex management paths are intentionally blocked.
+
+Catalog presence does not guarantee free-trial, regional, quota, or allowlist access. Vertex AI returns the authoritative inference error.
 
 ## Logging
 
@@ -180,4 +199,4 @@ LOG_FORMAT=json
     *   Verify the Vertex AI API is enabled in your GCP project.
     *   Check that the service account associated with your ADC (or your user credentials) has the "Vertex AI User" role or equivalent permissions.
 *   **`VERTEXAI_PROXY_API_KEY`**: Open WebUI sends this required shared secret unchanged as its API key; the proxy verifies it as the Bearer credential.
-*   **Model Not Found**: Ensure the model name used in your client application (e.g., Open WebUI) matches one of the models supported by the proxy (e.g., `google/gemini-2.5-pro-preview-03-25`). The client must send the model name with the `google/` prefix if required by the Vertex AI backend, as the proxy no longer automatically prepends it.
+*   **Model Access or Capability Errors**: The catalog is discovered live, but presence does not guarantee access in your project, region, quota, free trial, or allowlist. Use `/v1/chat/completions` only with models that support Vertex Chat Completions; use the native route for other supported inference capabilities. Vertex AI returns the authoritative inference error.

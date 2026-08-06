@@ -7,8 +7,6 @@ services:
       - VERTEXAI_PROXY_API_KEY=${VERTEXAI_PROXY_API_KEY:?Set VERTEXAI_PROXY_API_KEY in .env}
       # Point to the mounted ADC file inside the container
       - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp_adc.json
-      # Optional: Comma-separated list of models. See .env.example or README.md for details.
-      # - VERTEXAI_AVAILABLE_MODELS=${VERTEXAI_AVAILABLE_MODELS}
     volumes:
       # Mount the ADC file from your host to the container
       # IMPORTANT: Replace ~/.config/gcloud/application_default_credentials.json
