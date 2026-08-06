@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -273,60 +272,6 @@ func makeProxy(target *url.URL) http.Handler {
 	})
 }
 
-func handleModels(w http.ResponseWriter, r *http.Request) {
-	logger.Debug("handleModels: Received request", "method", r.Method, "path", r.URL.Path, "remote_addr", r.RemoteAddr)
-
-	defaultModelIDs := []string{
-		"google/gemini-2.5-pro-preview-03-25",
-		"google/gemini-2.5-flash-preview-04-17",
-	}
-	modelIDs := defaultModelIDs
-
-	availableModelsStr := os.Getenv("VERTEXAI_AVAILABLE_MODELS")
-	if availableModelsStr != "" {
-		customModelIDsRaw := strings.Split(availableModelsStr, ",")
-		var customModelIDsFiltered []string
-		for _, id := range customModelIDsRaw {
-			trimmedID := strings.TrimSpace(id)
-			if trimmedID != "" {
-				customModelIDsFiltered = append(customModelIDsFiltered, trimmedID)
-			}
-		}
-
-		if len(customModelIDsFiltered) > 0 {
-			modelIDs = customModelIDsFiltered
-			logger.Info("handleModels: Using custom models from VERTEXAI_AVAILABLE_MODELS", "models", modelIDs)
-		} else {
-			logger.Warn("handleModels: VERTEXAI_AVAILABLE_MODELS set but empty", "env_var_value", availableModelsStr, "using_default_models", modelIDs)
-		}
-	} else {
-		logger.Info("handleModels: VERTEXAI_AVAILABLE_MODELS not set or empty", "using_default_models", modelIDs)
-	}
-
-	currentTime := time.Now().Unix()
-	responseModels := make([]Model, len(modelIDs))
-	for i, id := range modelIDs {
-		responseModels[i] = Model{
-			ID:      id,
-			Object:  "model",
-			Created: currentTime,
-			OwnedBy: "google", // Assuming all models specified this way are "ownedBy: google"
-		}
-	}
-
-	response := ModelList{
-		Object: "list",
-		Data:   responseModels,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error("Error encoding models list response", "error", err)
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
-	logger.Info("handleModels: Successfully sent models list", "count", len(responseModels))
-}
 
 func main() {
 	initSlogLogger() // Initialize logger first
@@ -367,9 +312,11 @@ func main() {
 		log.Fatalf("main: Error parsing target baseURL '%s': %v", baseURL, err)
 	}
 	logger.Info("main: Proxy target URL configured", "url", target.String())
+	catalog := newModelCatalog(target.Scheme+"://"+target.Host, http.DefaultClient, getToken, time.Now)
 
 	auth := newAPIKeyAuth(apiKey)
-	http.Handle("/v1/models", auth(http.HandlerFunc(handleModels)))
+	http.Handle("/v1/models", auth(newOpenAIModelsHandler(catalog)))
+	http.Handle("/vertex/v1/models", auth(newNativeModelsHandler(catalog)))
 	http.Handle("/v1/", auth(makeProxy(target)))
 
 	// Get port from environment variable, default to 8080
