@@ -12,7 +12,7 @@ services:
       # Mount the ADC file from your host to the container
       # IMPORTANT: Replace ~/.config/gcloud/application_default_credentials.json
       # with the actual path to your ADC file if it's different.
-      - ~/.config/gcloud/application_default_credentials.json:/app/gcp_adc.json:ro
+      - ~/Documents/ADC.json:/app/gcp_adc.json:ro
     restart: unless-stopped
     #healthcheck:
     #  test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/models"] # A simple check, adjust path if needed
@@ -23,7 +23,7 @@ services:
   webui:
     image: ghcr.io/open-webui/open-webui:main
     ports:
-      - "127.0.0.1:8080:8080" # Map host port 3000 to Open WebUI's container port 8080
+      - "0.0.0.0:8080:8080" # Expose Open WebUI on all IPv4 interfaces
     environment:
       OPENAI_API_BASE_URL: http://proxy:8080/v1
       OPENAI_API_KEY: dummy_key_for_vertex_proxy
