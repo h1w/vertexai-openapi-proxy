@@ -16,6 +16,7 @@
 - Create `thought_signature_test.go`: deterministic unit coverage for store lifetime, JSON recovery, and upstream JSON/SSE extraction.
 - Modify `main.go`: connect a thought-signature store to the OpenAI proxy; wrap successful upstream bodies without changing wire bytes.
 - Modify `main_test.go`: integration-level handler test for upstream SSE capture followed by recovery on the tool-result request.
+- Modify `Dockerfile:8`: include the new thought-signature source file in the build-stage source copy.
 - Modify `README.md`: document tool-call continuation compatibility and the model-capability boundary.
 
 ### Task 1: Build a deterministic thought-signature store
@@ -204,6 +205,7 @@ git commit -m "feat: recover missing Vertex tool signatures"
 - Modify: `main.go:147-273`
 - Modify: `main_test.go:105-210`
 - Modify: `thought_signature.go`
+- Modify: `Dockerfile:8`
 - Test: `thought_signature_test.go`
 
 - [ ] **Step 1: Write the failing end-to-end handler test**
@@ -237,6 +239,12 @@ signatures := newThoughtSignatureStore(thoughtSignatureTTL, time.Now)
 Before `reverseProxy.ServeHTTP`, for `POST /v1/chat/completions`, call `restoreThoughtSignatures` after existing body reading. If it reports a change, replace `r.Body` and `r.ContentLength` with the recovered JSON body. Preserve the original `Content-Length` behavior when it reports no change.
 
 At the end of existing `ModifyResponse`, select capture based on `Content-Type` using `mime.ParseMediaType`: wrap `text/event-stream` responses; otherwise inspect only `application/json`. Keep the existing gzip error logging before this capture step.
+
+Update the Docker build-stage source copy so the new Go file is compiled:
+
+```dockerfile
+COPY auth.go catalog.go main.go native_proxy.go thought_signature.go ./
+```
 
 - [ ] **Step 4: Run focused proxy tests and verify they pass**
 
