@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +69,7 @@ func initSlogLogger() {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
 		handler = slog.NewTextHandler(os.Stdout, opts) // Default
-		 if logFormatStr != "" && logFormatStr != "text" {
+		if logFormatStr != "" && logFormatStr != "text" {
 			log.Printf("Warning: Invalid LOG_FORMAT '%s', defaulting to 'text'. Valid formats: text, json.", logFormatStr)
 		}
 	}
@@ -145,6 +146,8 @@ func getToken(ctx context.Context) (string, error) {
 }
 
 func makeProxy(target *url.URL) http.Handler {
+	signatures := newThoughtSignatureStore(thoughtSignatureTTL, time.Now)
+
 	reverseProxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			// Log basic request info. Avoid logging full headers here to prevent excessive log volume.
@@ -161,25 +164,16 @@ func makeProxy(target *url.URL) http.Handler {
 			// For specific paths like /v1/chat/completions, we might need to inspect/modify the body.
 			// Currently, no body modifications are performed by default.
 			// If body processing is needed for certain paths, it can be added here.
-			if originalPath == "/v1/chat/completions" {
-				if req.Body != nil && req.Body != http.NoBody {
-					bodyBytes, readErr := io.ReadAll(req.Body)
-					// After ReadAll, the original req.Body is consumed. We must always replace it.
-					// req.Body.Close() is typically handled by ReadAll on success or by the server processing the request.
-
-					if readErr != nil {
-						logger.Error("makeProxy Director: Error reading request body", "path", originalPath, "error", readErr)
-						// bodyBytes will contain what was read before the error.
-						// Replace req.Body with what was read. ContentLength might be inaccurate if read was partial.
-						req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-						req.ContentLength = int64(len(bodyBytes))
-					} else {
-						// Body read successfully. Log the body before passing it through.
-						logger.Debug("makeProxy Director: Outgoing request body", "path", originalPath, "body", string(bodyBytes))
-						req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-						req.ContentLength = int64(len(bodyBytes))
-					}
+			if originalPath == "/v1/chat/completions" && req.Body != nil && req.Body != http.NoBody {
+				bodyBytes, readErr := io.ReadAll(req.Body)
+				if readErr != nil {
+					logger.Error("makeProxy Director: Error reading request body", "path", originalPath, "error", readErr)
+				} else if recoveredBody, changed := restoreThoughtSignatures(bodyBytes, signatures); changed {
+					bodyBytes = recoveredBody
 				}
+				logger.Debug("makeProxy Director: Outgoing request body", "path", originalPath, "body", string(bodyBytes))
+				req.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				req.ContentLength = int64(len(bodyBytes))
 			}
 
 			// All /v1/* paths are proxied by stripping /v1 and appending to target.Path
@@ -248,6 +242,18 @@ func makeProxy(target *url.URL) http.Handler {
 					}
 				}
 			}
+			if resp.StatusCode < http.StatusBadRequest && resp.Request.Method == http.MethodPost && strings.HasSuffix(resp.Request.URL.Path, "/chat/completions") {
+				mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+				if err != nil {
+					return nil
+				}
+				switch mediaType {
+				case "text/event-stream":
+					resp.Body = newThoughtSignatureCapturingReadCloser(resp.Body, signatures)
+				case "application/json":
+					resp.Body = captureThoughtSignaturesFromJSONResponse(resp.Body, signatures)
+				}
+			}
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -272,7 +278,6 @@ func makeProxy(target *url.URL) http.Handler {
 	})
 }
 
-
 func main() {
 	initSlogLogger() // Initialize logger first
 
@@ -289,7 +294,6 @@ func main() {
 	if apiKey == "" {
 		log.Fatal("VERTEXAI_PROXY_API_KEY env var must be set")
 	}
-
 
 	var baseURL string
 	if location == "global" {

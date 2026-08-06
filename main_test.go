@@ -1,8 +1,9 @@
 package main
 
 import (
-	"errors"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -162,6 +163,131 @@ func TestMakeProxy(t *testing.T) {
 	}
 }
 
+func TestMakeProxy_RestoresVertexThoughtSignature(t *testing.T) {
+	tokenMutex.Lock()
+	originalToken, originalExpiry := token, expiry
+	token, expiry = "", time.Time{}
+	tokenMutex.Unlock()
+	t.Cleanup(func() {
+		tokenMutex.Lock()
+		token, expiry = originalToken, originalExpiry
+		tokenMutex.Unlock()
+	})
+
+	originalFindDefaultCredentials := googleFindDefaultCredentials
+	googleFindDefaultCredentials = func(context.Context, ...string) (*google.Credentials, error) {
+		return &google.Credentials{TokenSource: &MockTokenSource{
+			AccessTokenString: "test-token",
+			ExpiryTime:        time.Now().Add(time.Hour),
+		}}, nil
+	}
+	t.Cleanup(func() {
+		googleFindDefaultCredentials = originalFindDefaultCredentials
+	})
+
+	const upstreamToolCall = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{}\"},\"extra_content\":{\"google\":{\"thought_signature\":\"vertex-signature\"}}}]}}]}\n\ndata: [DONE]\n\n"
+	upstreamRequests := 0
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequests++
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("upstream path = %q, want /chat/completions", r.URL.Path)
+		}
+		if upstreamRequests == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, upstreamToolCall)
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"thought_signature":"vertex-signature"`) {
+			t.Errorf("recovered upstream request omitted signature: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[]}`)
+	}))
+	t.Cleanup(targetServer.Close)
+
+	targetURL, err := url.Parse(targetServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := makeProxy(targetURL)
+
+	firstRequest := httptest.NewRequest(http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(`{"messages":[]}`))
+	firstRequest.Header.Set("Content-Type", "application/json")
+	firstResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(firstResponse, firstRequest)
+	if got := firstResponse.Body.String(); got != upstreamToolCall {
+		t.Errorf("stream response changed:\n got: %q\nwant: %q", got, upstreamToolCall)
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(unsignedToolResultRequest))
+	secondRequest.Header.Set("Content-Type", "application/json")
+	secondResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(secondResponse, secondRequest)
+	if upstreamRequests != 2 {
+		t.Errorf("upstream requests = %d, want 2", upstreamRequests)
+	}
+}
+
+func TestMakeProxy_CapturesNonStreamingVertexThoughtSignature(t *testing.T) {
+	tokenMutex.Lock()
+	originalToken, originalExpiry := token, expiry
+	token, expiry = "", time.Time{}
+	tokenMutex.Unlock()
+	t.Cleanup(func() {
+		tokenMutex.Lock()
+		token, expiry = originalToken, originalExpiry
+		tokenMutex.Unlock()
+	})
+
+	originalFindDefaultCredentials := googleFindDefaultCredentials
+	googleFindDefaultCredentials = func(context.Context, ...string) (*google.Credentials, error) {
+		return &google.Credentials{TokenSource: &MockTokenSource{
+			AccessTokenString: "test-token",
+			ExpiryTime:        time.Now().Add(time.Hour),
+		}}, nil
+	}
+	t.Cleanup(func() {
+		googleFindDefaultCredentials = originalFindDefaultCredentials
+	})
+
+	const upstreamToolCall = `{"choices":[{"message":{"tool_calls":[{"id":"call-1","extra_content":{"google":{"thought_signature":"vertex-signature"}}}]}}]}`
+	upstreamRequests := 0
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequests++
+		if upstreamRequests == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, upstreamToolCall)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"thought_signature":"vertex-signature"`) {
+			t.Errorf("recovered upstream request omitted signature: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[]}`)
+	}))
+	t.Cleanup(targetServer.Close)
+
+	targetURL, err := url.Parse(targetServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := makeProxy(targetURL)
+	proxy.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(`{"messages":[]}`)))
+	proxy.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(unsignedToolResultRequest)))
+	if upstreamRequests != 2 {
+		t.Errorf("upstream requests = %d, want 2", upstreamRequests)
+	}
+}
+
 func TestMakeProxy_DoesNotForwardClientAuthorizationWhenADCFails(t *testing.T) {
 	tokenMutex.Lock()
 	originalToken, originalExpiry := token, expiry
@@ -207,4 +333,3 @@ func TestMakeProxy_DoesNotForwardClientAuthorizationWhenADCFails(t *testing.T) {
 		t.Errorf("upstream received %d requests after ADC failure, want 0", upstreamRequests)
 	}
 }
-
