@@ -1,6 +1,8 @@
 services:
   proxy:
     build: .
+    ports:
+      - "0.0.0.0:8081:8080" # Expose the authenticated proxy on all IPv4 interfaces
     environment:
       - VERTEXAI_PROJECT=${VERTEXAI_PROJECT}
       - VERTEXAI_LOCATION=${VERTEXAI_LOCATION}

@@ -110,12 +110,12 @@ Both API surfaces require `Authorization: Bearer $VERTEXAI_PROXY_API_KEY`. Docke
 
 ### Native Vertex AI surface
 
-* `GET /vertex/v1/models` returns the catalog.
-* Send native inference requests to `/vertex/v1/models/{publisher}/{model}:{action}`. For example:
+* `GET http://localhost:8081/vertex/v1/models` returns the catalog. LAN clients can use `http://<host-LAN-IP>:8081`.
+* Send native inference requests to exactly `/vertex/v1/models/google/{model}:{action}`. For example:
 
   ```bash
   curl --request POST \
-    --url http://localhost:8080/vertex/v1/models/google/gemini-2.5-flash:generateContent \
+    --url http://localhost:8081/vertex/v1/models/google/gemini-2.5-flash:generateContent \
     --header "Authorization: Bearer $VERTEXAI_PROXY_API_KEY" \
     --header "Content-Type: application/json" \
     --data '{
