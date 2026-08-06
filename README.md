@@ -20,7 +20,7 @@ It is designed to be run as a Docker container, typically orchestrated with `doc
     *   The proxy relies on the ADC file (typically found at `~/.config/gcloud/application_default_credentials.json` on Linux/macOS) to authenticate with Google Cloud. This file needs to be mounted into the proxy container.
 3.  **Environment Variables**:
     *   `VERTEXAI_PROJECT`: Your Google Cloud Project ID.
-    *   `VERTEXAI_LOCATION`: The Google Cloud region for Vertex AI (e.g., `us-central1`).
+    *   `VERTEXAI_LOCATION`: The Vertex AI endpoint location. Use `global` to discover the global Google publisher-model catalog.
     *   `VERTEXAI_PROXY_API_KEY`: A required long, random secret used to authenticate requests to the proxy.
 4.  **Docker and Docker Compose**: Required to build and run the service.
 
@@ -28,27 +28,19 @@ It is designed to be run as a Docker container, typically orchestrated with `doc
 
 The project includes a `docker-compose.yml` file for easy setup with Open WebUI.
 
-1.  **Configure Environment Variables**:
-    Ensure `VERTEXAI_PROJECT`, `VERTEXAI_LOCATION`, and `VERTEXAI_PROXY_API_KEY` are set in your environment or in a `.env` file in the project root. `VERTEXAI_PROXY_API_KEY` is required and must be a long, random secret. `docker-compose` will automatically pick them up.
-    Example `.env` file:
+1.  **Create `.env` from the template**:
+    ```bash
+    cp .example.env .env
     ```
-    VERTEXAI_PROJECT=your-gcp-project-id
-    VERTEXAI_LOCATION=us-central1
-    VERTEXAI_PROXY_API_KEY=replace-with-a-long-random-secret
-    ```
+    Set `VERTEXAI_PROJECT` to your Google Cloud project. The template uses `VERTEXAI_LOCATION=global`, which discovers the global Google publisher-model catalog. Generate a unique `VERTEXAI_PROXY_API_KEY`; Docker Compose passes it to both the proxy and Open WebUI.
 
-2.  **Verify ADC Path (if necessary)**:
-    The `docker-compose.yml` mounts `~/.config/gcloud/application_default_credentials.json` by default. If your ADC file is located elsewhere, update the volume mount path for the `proxy` service in `docker-compose.yml`:
-    ```yaml
-    services:
-      proxy:
-        # ...
-        volumes:
-          # IMPORTANT: Replace ~/.config/gcloud/application_default_credentials.json
-          # with the actual path to your ADC file if it's different.
-          - /path/to/your/adc.json:/app/gcp_adc.json:ro
-        # ...
+2.  **Provide ADC credentials**:
+    The included `docker-compose.yml` mounts `~/Documents/ADC.json` into the proxy container. After `gcloud auth application-default login`, either copy the default ADC file:
+    ```bash
+    mkdir -p ~/Documents
+    cp ~/.config/gcloud/application_default_credentials.json ~/Documents/ADC.json
     ```
+    or change the `proxy` volume mount in `docker-compose.yml` to your existing ADC path.
 
 3.  **Start the Services**:
     ```bash
@@ -77,7 +69,7 @@ The Go application includes unit tests.
 The proxy service is configured via environment variables:
 
 *   `VERTEXAI_PROJECT`: (Required) Your Google Cloud Project ID.
-*   `VERTEXAI_LOCATION`: (Required) The Google Cloud region for Vertex AI (e.g., `us-central1`) or `global` for the global endpoint.
+*   `VERTEXAI_LOCATION`: (Required) `global` for the global Vertex publisher-model catalog, or a specific supported Vertex region.
 *   `VERTEXAI_PROXY_API_KEY`: (Required) A long, random secret that clients must send as a Bearer credential to authenticate with the proxy.
 *   `GOOGLE_APPLICATION_CREDENTIALS`: (Set within `docker-compose.yml`) Points to the path of the mounted ADC JSON file inside the container (e.g., `/app/gcp_adc.json`).
 
