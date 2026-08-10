@@ -247,6 +247,15 @@ func makeProxy(target *url.URL) http.Handler {
 				if err != nil {
 					return nil
 				}
+				if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
+					decodedBody, err := decodeGzipBody(resp.Body)
+					if err == nil {
+						resp.Body = decodedBody
+						resp.Header.Del("Content-Encoding")
+						resp.Header.Del("Content-Length")
+						resp.ContentLength = -1
+					}
+				}
 				switch mediaType {
 				case "text/event-stream":
 					resp.Body = newThoughtSignatureCapturingReadCloser(resp.Body, signatures)

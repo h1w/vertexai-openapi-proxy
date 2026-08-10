@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"sync"
@@ -319,6 +320,29 @@ type preservingReadCloser struct {
 
 func (body *preservingReadCloser) Close() error {
 	return body.closer.Close()
+}
+
+func decodeGzipBody(body io.ReadCloser) (io.ReadCloser, error) {
+	reader, err := gzip.NewReader(body)
+	if err != nil {
+		return body, err
+	}
+	return &gzipDecodingReadCloser{Reader: reader, reader: reader, body: body}, nil
+}
+
+type gzipDecodingReadCloser struct {
+	io.Reader
+	reader *gzip.Reader
+	body   io.Closer
+}
+
+func (body *gzipDecodingReadCloser) Close() error {
+	readerErr := body.reader.Close()
+	bodyErr := body.body.Close()
+	if readerErr != nil {
+		return readerErr
+	}
+	return bodyErr
 }
 
 func (store *thoughtSignatureStore) removeExpired(now time.Time) {

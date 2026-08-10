@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -226,6 +227,82 @@ func TestMakeProxy_RestoresVertexThoughtSignature(t *testing.T) {
 
 	secondRequest := httptest.NewRequest(http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(unsignedToolResultRequest))
 	secondRequest.Header.Set("Content-Type", "application/json")
+	secondResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(secondResponse, secondRequest)
+	if upstreamRequests != 2 {
+		t.Errorf("upstream requests = %d, want 2", upstreamRequests)
+	}
+}
+
+func TestMakeProxy_RestoresGzipVertexThoughtSignature(t *testing.T) {
+	tokenMutex.Lock()
+	originalToken, originalExpiry := token, expiry
+	token, expiry = "", time.Time{}
+	tokenMutex.Unlock()
+	t.Cleanup(func() {
+		tokenMutex.Lock()
+		token, expiry = originalToken, originalExpiry
+		tokenMutex.Unlock()
+	})
+
+	originalFindDefaultCredentials := googleFindDefaultCredentials
+	googleFindDefaultCredentials = func(context.Context, ...string) (*google.Credentials, error) {
+		return &google.Credentials{TokenSource: &MockTokenSource{
+			AccessTokenString: "test-token",
+			ExpiryTime:        time.Now().Add(time.Hour),
+		}}, nil
+	}
+	t.Cleanup(func() {
+		googleFindDefaultCredentials = originalFindDefaultCredentials
+	})
+
+	const upstreamToolCall = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"{}\"},\"extra_content\":{\"google\":{\"thought_signature\":\"vertex-signature\"}}}]}}]}\n\ndata: [DONE]\n\n"
+	upstreamRequests := 0
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequests++
+		if upstreamRequests == 1 {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Type", "text/event-stream")
+			compressor := gzip.NewWriter(w)
+			if _, err := io.WriteString(compressor, upstreamToolCall); err != nil {
+				t.Fatal(err)
+			}
+			if err := compressor.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"thought_signature":"vertex-signature"`) {
+			t.Errorf("recovered upstream request omitted signature: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[]}`)
+	}))
+	t.Cleanup(targetServer.Close)
+
+	targetURL, err := url.Parse(targetServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := makeProxy(targetURL)
+
+	firstRequest := httptest.NewRequest(http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(`{"messages":[]}`))
+	firstRequest.Header.Set("Accept-Encoding", "gzip, deflate")
+	firstResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(firstResponse, firstRequest)
+	if got := firstResponse.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("content encoding = %q, want identity", got)
+	}
+	if got := firstResponse.Body.String(); got != upstreamToolCall {
+		t.Errorf("stream response = %q, want %q", got, upstreamToolCall)
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(unsignedToolResultRequest))
 	secondResponse := httptest.NewRecorder()
 	proxy.ServeHTTP(secondResponse, secondRequest)
 	if upstreamRequests != 2 {
