@@ -323,11 +323,31 @@ func (body *preservingReadCloser) Close() error {
 }
 
 func decodeGzipBody(body io.ReadCloser) (io.ReadCloser, error) {
-	reader, err := gzip.NewReader(body)
+	recorder := &prefixRecordingReader{Reader: body, recording: true}
+	reader, err := gzip.NewReader(recorder)
 	if err != nil {
-		return body, err
+		return &preservingReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(recorder.prefix.Bytes()), body),
+			closer: body,
+		}, err
 	}
+	recorder.recording = false
+	recorder.prefix.Reset()
 	return &gzipDecodingReadCloser{Reader: reader, reader: reader, body: body}, nil
+}
+
+type prefixRecordingReader struct {
+	io.Reader
+	prefix    bytes.Buffer
+	recording bool
+}
+
+func (reader *prefixRecordingReader) Read(buffer []byte) (int, error) {
+	n, err := reader.Reader.Read(buffer)
+	if reader.recording && n > 0 {
+		_, _ = reader.prefix.Write(buffer[:n])
+	}
+	return n, err
 }
 
 type gzipDecodingReadCloser struct {

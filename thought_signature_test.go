@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,29 @@ func TestCaptureThoughtSignaturesFromJSONResponseClosesUpstreamBody(t *testing.T
 	}
 	if !upstream.closed {
 		t.Fatal("closing captured body did not close the upstream body")
+	}
+}
+
+func TestDecodeGzipBodyPreservesMalformedResponse(t *testing.T) {
+	const upstreamBody = "not gzip"
+	upstream := &closeTrackingReadCloser{Reader: strings.NewReader(upstreamBody)}
+
+	decoded, err := decodeGzipBody(upstream)
+	if err == nil {
+		t.Fatal("decodeGzipBody() error = nil, want malformed gzip error")
+	}
+	t.Cleanup(func() {
+		if closeErr := decoded.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	})
+
+	body, readErr := io.ReadAll(decoded)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if got := string(body); got != upstreamBody {
+		t.Errorf("body = %q, want %q", got, upstreamBody)
 	}
 }
 
